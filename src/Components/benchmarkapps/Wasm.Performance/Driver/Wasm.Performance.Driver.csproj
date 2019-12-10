@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>$(DefaultNetCoreTargetFramework)</TargetFramework>
+    <TargetFramework Condition="'$(BenchmarksTargetFramework)' != ''">$(BenchmarksTargetFramework)</TargetFramework>
+
+    <UseLatestAspNetCoreReference>true</UseLatestAspNetCoreReference>
+
+    <!-- WebDriver is not strong-named, so this test project cannot be strong named either. -->
+    <SignAssembly>false</SignAssembly>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Selenium.Support" />
+    <Reference Include="Selenium.WebDriver" />
+    <ProjectReference Include="..\..\..\Blazor\DevServer\src\Microsoft.AspNetCore.Blazor.DevServer.csproj" />
+    <ProjectReference Include="..\TestApp\Wasm.Perforrmance.TestApp.csproj" />
+  </ItemGroup>
+
+</Project>
