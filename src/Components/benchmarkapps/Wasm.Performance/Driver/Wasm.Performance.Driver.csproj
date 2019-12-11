@@ -5,6 +5,7 @@
     <TargetFramework Condition="'$(BenchmarksTargetFramework)' != ''">$(BenchmarksTargetFramework)</TargetFramework>
 
     <UseLatestAspNetCoreReference>true</UseLatestAspNetCoreReference>
+    <OutputType>exe</OutputType>
 
     <!-- WebDriver is not strong-named, so this test project cannot be strong named either. -->
     <SignAssembly>false</SignAssembly>
@@ -15,6 +16,13 @@
     <Reference Include="Selenium.WebDriver" />
     <ProjectReference Include="..\..\..\Blazor\DevServer\src\Microsoft.AspNetCore.Blazor.DevServer.csproj" />
     <ProjectReference Include="..\TestApp\Wasm.Perforrmance.TestApp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TestAppLocation</_Parameter1>
+      <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\TestApp\'))</_Parameter2>
+    </AssemblyAttribute>
   </ItemGroup>
 
 </Project>

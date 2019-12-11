@@ -2,14 +2,11 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
-using System.Diagnostics;
-using System.IO;
+using System.Collections.Generic;
 using System.Linq;
-using System.Net;
-using System.Net.Http;
+using System.Reflection;
 using System.Runtime.ExceptionServices;
-using System.Runtime.InteropServices;
-using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Hosting;
@@ -20,27 +17,25 @@ using Microsoft.Extensions.Hosting;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Chrome;
 using OpenQA.Selenium.Remote;
+using OpenQA.Selenium.Support.UI;
+using Wasm.Performance.Driver;
 using DevHostServerProgram = Microsoft.AspNetCore.Blazor.DevServer.Server.Program;
 
 namespace Wasm.Perforrmance.Driver
 {
     public class Program
     {
-        // Total time we'll give for the test app before we consider it timed out.
-        const int Port = 9001;
-
         // Run Selenium using a headless browser?
         static readonly bool RunHeadlessBrowser
-            = !Debugger.IsAttached;
-        // = false;
+            = !System.Diagnostics.Debugger.IsAttached;
+         // = false;
 
         static readonly TimeSpan TestAppTimeOut = TimeSpan.FromMinutes(10);
 
         public static async Task Main()
         {
-            using var process = StartSeleniumServer();
-            var seleniumServerUri = await EnsureSeleniumInitialized();
-            using var browser = CreateBrowser(seleniumServerUri);
+            using var seleniumServer = await SeleniumServer.StartAsync();
+            using var browser = CreateBrowser(seleniumServer.Uri);
             using var testApp = RunTestApp();
 
             var address = testApp.Services.GetRequiredService<IServer>()
@@ -49,13 +44,68 @@ namespace Wasm.Perforrmance.Driver
                 .Addresses
                 .First();
 
-            browser.Url = address;
+            browser.Url = address + "#automated";
             browser.Navigate();
+
+            var results = await RunBenchmark(browser);
+            Console.WriteLine(JsonSerializer.Serialize(results));
+        }
+
+        private static Task<List<BenchmarkResult>> RunBenchmark(RemoteWebDriver browser)
+        {
+            var remoteLogs = new RemoteLogs(browser);
+            var tcs = new TaskCompletionSource<List<BenchmarkResult>>();
+
+            Task.Run(() =>
+            {
+                try
+                {
+                    var results = new List<BenchmarkResult>();
+                    var lastSeenCount = 0;
+                    new WebDriverWait(browser, TimeSpan.FromSeconds(90)).Until(c =>
+                    {
+                        var logs = remoteLogs.GetLog("browser");
+                        for (var i = lastSeenCount; i < logs.Count; i++)
+                        {
+                            Console.WriteLine(logs[i].Message);
+                            if (logs[i].Message.Contains("Benchmark completed", StringComparison.Ordinal))
+                            {
+                                return true;
+                            }
+                        }
+
+                        lastSeenCount = logs.Count;
+                        return false;
+                    });
+
+                    var js = (string)browser.ExecuteScript("return JSON.stringify(window.benchmarksResults)");
+                    tcs.TrySetResult(JsonSerializer.Deserialize<List<BenchmarkResult>>(js, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+                }
+                catch (Exception ex)
+                {
+                    tcs.TrySetException(ex);
+                }
+            });
+
+            return tcs.Task;
+        }
+
+        private class BenchmarkResult
+        {
+            public string Name { get; set; }
+
+            public bool Success { get; set; }
+
+            public int NumExecutions { get; set; }
+
+            public double Duration { get; set; }
         }
 
         static IHost RunTestApp()
         {
-            var testAppRoot = Path.Combine(Directory.GetCurrentDirectory(), "..", "TestApp");
+            var testAppRoot = typeof(Program).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+                .First(f => f.Key == "TestAppLocation")
+                .Value;
 
             var args = new[]
             {
@@ -99,78 +149,7 @@ namespace Wasm.Perforrmance.Driver
             }
         }
 
-        private static Process StartSeleniumServer()
-        {
-            var outputLock = new object();
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = "npm",
-                Arguments = $"run selenium-standalone start -- -- -port {Port}",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                psi.FileName = "cmd";
-                psi.Arguments = $"/c npm {psi.Arguments}";
-            }
-
-            var process = Process.Start(psi);
-            var output = new StringBuilder();
-            process.OutputDataReceived += (_, e) =>
-            {
-                lock (outputLock)
-                {
-                    Console.WriteLine(e.Data);
-                }
-            };
-
-            process.ErrorDataReceived += (_, e) =>
-            {
-                lock (outputLock)
-                {
-                    Console.Error.WriteLine(e.Data);
-                }
-            };
-
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-            return process;
-        }
-
-        static async Task<Uri> EnsureSeleniumInitialized()
-        {
-            var httpClient = new HttpClient
-            {
-                Timeout = TimeSpan.FromSeconds(1),
-            };
-
-            var uri = new UriBuilder("http", "localhost", Port, "/wd/hub").Uri;
-
-            const int MaxRetries = 30;
-            var retries = 0;
-
-            while (true)
-            {
-                retries++;
-                await Task.Delay(1000);
-                try
-                {
-                    var response = await httpClient.GetAsync(uri);
-                    if (response.StatusCode == HttpStatusCode.OK)
-                    {
-                        return uri;
-                    }
-                }
-                catch when (retries < MaxRetries)
-                {
-                }
-            }
-        }
-
-        static IWebDriver CreateBrowser(Uri uri)
+        static RemoteWebDriver CreateBrowser(Uri uri)
         {
             var options = new ChromeOptions();
 
